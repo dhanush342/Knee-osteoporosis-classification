@@ -1,0 +1,17 @@
+fastapi==0.95.2
+uvicorn[standard]==0.22.0
+torch==2.2.0
+torchvision==0.17.0
+tensorflow==2.12.0 # optional if you prefer TF for transfer models
+xgboost==1.7.6
+scikit-learn==1.3.2
+pillow==10.0.0
+numpy==1.26.4
+pandas==2.2.2
+opencv-python==4.8.1.78
+shap==0.41.0
+matplotlib==3.8.2
+tqdm==4.66.1
+aiofiles==23.1.0
+python-multipart==0.0.6
+joblib==1.3.2 

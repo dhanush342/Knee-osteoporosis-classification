@@ -6,6 +6,7 @@ This is my project for Knee Osteoporosis Classification.
 
 This project presents a deep learning-based approach for detecting knee osteoporosis from X-ray images using the ResNet-50 architecture. It is designed to support early and accurate diagnosis using computer vision and transfer learning techniques.
 
+---
 # 📌 Project Highlights
 1.Model: ResNet-50 with transfer learning
 2.Task: Binary classification – Normal vs Osteoporotic knees

@@ -1,0 +1,41 @@
+============================================================
+ACCURACY ANALYSIS REPORT
+============================================================
+
+Total Models Analyzed: 6
+Dataset Size: 1000 samples, 100 features
+Classes: 2
+
+MODEL PERFORMANCE SUMMARY:
+--------------------------------------------------------------------------------
+Model                Train    Val      Test     CV       Overfit   
+--------------------------------------------------------------------------------
+Random Forest        1.0000   0.8850   0.8100   0.8483   0.1150    
+Gradient Boosting    1.0000   0.9300   0.8750   0.8683   0.0700    
+XGBoost              1.0000   0.9150   0.8650   0.8683   0.0850    
+Logistic Regression  0.9267   0.8700   0.8700   0.8000   0.0567    
+SVM                  0.9967   0.8250   0.8300   0.8017   0.1717    
+Neural Network       1.0000   0.7850   0.8050   0.7750   0.2150    
+
+BEST MODEL (by test accuracy): Gradient Boosting
+  Test Accuracy: 0.8750
+  Training Accuracy: 1.0000
+  Overfitting Score: 0.0700
+
+OVERFITTING ANALYSIS:
+------------------------------
+Models with potential overfitting (>0.1 difference):
+  - Random Forest: 0.1150
+  - SVM: 0.1717
+  - Neural Network: 0.2150
+
+RECOMMENDATIONS:
+--------------------
+  - Random Forest: Good generalization performance
+  - Gradient Boosting: Good generalization performance
+  - XGBoost: Good generalization performance
+  - Logistic Regression: Good generalization performance
+  - SVM: Consider regularization or early stopping
+  - Neural Network: Consider regularization or early stopping
+
+============================================================

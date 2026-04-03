@@ -14,9 +14,10 @@ import shap
 import io
 import csv
 import os
+from typing import List
 
 # -----------------------------
-# Load models at startup
+# 
 # -----------------------------
 app = FastAPI(title="Knee Osteoporosis Prediction API")
 
@@ -44,20 +45,38 @@ explainer = shap.TreeExplainer(xgb_clf)
 # -----------------------------
 # Transform for input images
 # -----------------------------
-transform = transforms.Compose([
+base_transform = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.485, 0.456, 0.406],
                          std=[0.229, 0.224, 0.225])
 ])
 
+def tta_transforms(image: Image.Image) -> List[torch.Tensor]:
+    """Create simple test-time augmentations and return batch tensors."""
+    variants = []
+    # original
+    variants.append(base_transform(image))
+    # horizontal flip
+    variants.append(base_transform(image.transpose(Image.FLIP_LEFT_RIGHT)))
+    # vertical flip
+    variants.append(base_transform(image.transpose(Image.FLIP_TOP_BOTTOM)))
+    # slight rotate
+    variants.append(base_transform(image.rotate(10)))
+    variants.append(base_transform(image.rotate(-10)))
+    return variants
+
 # -----------------------------
 # Helper functions
 # -----------------------------
-def extract_features(image: Image.Image):
-    img_tensor = transform(image).unsqueeze(0)  # add batch dimension
+def extract_features(image: Image.Image, use_tta: bool = True):
+    if use_tta:
+        tensors = tta_transforms(image)
+        batch = torch.stack(tensors, dim=0)
+    else:
+        batch = base_transform(image).unsqueeze(0)
     with torch.no_grad():
-        features = resnet_model(img_tensor)
+        features = resnet_model(batch)  # (N, 2048)
     return features.numpy()
 
 def append_history_csv(record: dict, path: str = "patienthistory.csv"):
@@ -83,18 +102,21 @@ async def predict(file: UploadFile = File(...)):
         data = await file.read()
         image = Image.open(io.BytesIO(data)).convert("RGB")
 
-        # Extract features and predict
-        features = extract_features(image)
-        pred = xgb_clf.predict(features)[0]
-        pred_proba = xgb_clf.predict_proba(features)[0].tolist()
+        # Extract features with TTA and predict (average probabilities)
+        features = extract_features(image, use_tta=True)
+        proba = xgb_clf.predict_proba(features)  # (N, 2)
+        avg_proba = proba.mean(axis=0).tolist()
+        positive_threshold = 0.6
+        pred = 1 if avg_proba[1] >= positive_threshold else 0
 
         # Explain prediction
-        shap_values = explainer.shap_values(features)
+        shap_values = explainer.shap_values(features.mean(axis=0, keepdims=True))
         explanation = shap_values.tolist()  # convert to JSON serializable
 
         return JSONResponse({
             "prediction": int(pred),
-            "probabilities": pred_proba,
+            "probabilities": avg_proba,
+            "threshold": positive_threshold,
             "shap_values": explanation
         })
 

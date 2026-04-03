@@ -7,6 +7,7 @@ import numpy as np
 import os
 from typing import Tuple, Optional, Dict, Any
 import warnings
+import torchvision.transforms as transforms
 
 # Globals (will be loaded lazily)
 xgb_clf = None
@@ -73,13 +74,15 @@ def preprocess_image(image_path: str, target_size: Tuple[int, int] = (224, 224))
         # Load and convert image
         image = Image.open(image_path).convert("RGB")
         
-        # Resize image
-        image = image.resize(target_size)
-        
-        # Convert to tensor and normalize
-        image_array = np.array(image)
-        image_tensor = torch.tensor(image_array).permute(2, 0, 1).unsqueeze(0).float() / 255.0
-        
+        # Use the exact same preprocessing as training/API (ImageNet stats)
+        preprocess = transforms.Compose([
+            transforms.Resize(target_size),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ])
+
+        image_tensor = preprocess(image).unsqueeze(0)
+
         return image_tensor
         
     except Exception as e:
@@ -105,7 +108,7 @@ def extract_features(image_tensor: torch.Tensor) -> np.ndarray:
     
     return features
 
-def predict(image_path: str, return_probabilities: bool = True) -> Dict[str, Any]:
+def predict(image_path: str, return_probabilities: bool = True, positive_threshold: float = 0.6) -> Dict[str, Any]:
     """
     Make prediction on an image
     
@@ -132,23 +135,29 @@ def predict(image_path: str, return_probabilities: bool = True) -> Dict[str, Any
         # Extract features
         features = extract_features(image_tensor)
         
-        # Make prediction
-        prediction = xgb_clf.predict(features)[0]
-        
+        # Probabilities and thresholded prediction for stability
+        proba = None
+        if hasattr(xgb_clf, 'predict_proba'):
+            proba = xgb_clf.predict_proba(features)[0]
+            positive_proba = float(proba[1])
+            negative_proba = float(proba[0])
+            # Thresholding: require higher evidence to call positive (reduces flip-flops)
+            prediction = 1 if positive_proba >= positive_threshold else 0
+        else:
+            prediction = int(xgb_clf.predict(features)[0])
+
         result = {
             "prediction": int(prediction),
             "prediction_label": "Osteoporosis" if prediction == 1 else "No Osteoporosis",
             "image_path": image_path
         }
-        
-        # Add probabilities if requested
-        if return_probabilities and hasattr(xgb_clf, 'predict_proba'):
-            probabilities = xgb_clf.predict_proba(features)[0]
+
+        if return_probabilities and proba is not None:
             result["probabilities"] = {
-                "no_osteoporosis": float(probabilities[0]),
-                "osteoporosis": float(probabilities[1])
+                "no_osteoporosis": negative_proba,
+                "osteoporosis": positive_proba
             }
-            result["confidence"] = float(max(probabilities))
+            result["confidence"] = float(max(positive_proba, negative_proba))
         
         return result
         

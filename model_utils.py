@@ -6,6 +6,322 @@ from torchvision import models, transforms
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 from PIL import Image
+import torch.nn as nn
+from torch.optim.lr_scheduler import ReduceLROnPlateau, CosineAnnealingWarmRestarts
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
+
+
+# Enhanced data augmentation for medical images
+def get_advanced_transforms(is_training=True, image_size=224):
+    """Get advanced data augmentation transforms optimized for medical images"""
+    if is_training:
+        return A.Compose([
+            A.Resize(image_size, image_size),
+            A.HorizontalFlip(p=0.5),
+            A.VerticalFlip(p=0.3),
+            A.RandomRotate90(p=0.5),
+            A.ShiftScaleRotate(shift_limit=0.1, scale_limit=0.1, rotate_limit=15, p=0.5),
+            A.OneOf([
+                A.MotionBlur(blur_limit=3, p=0.5),
+                A.MedianBlur(blur_limit=3, p=0.5),
+                A.Blur(blur_limit=3, p=0.5),
+            ], p=0.3),
+            A.OneOf([
+                A.CLAHE(clip_limit=2, p=0.5),
+                A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=0.5),
+                A.RandomGamma(gamma_limit=(80, 120), p=0.5),
+            ], p=0.5),
+            A.OneOf([
+                A.GaussNoise(var_limit=(10.0, 50.0), p=0.5),
+                A.ISONoise(color_shift=(0.01, 0.05), p=0.5),
+            ], p=0.3),
+            A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            ToTensorV2(),
+        ])
+    else:
+        return A.Compose([
+            A.Resize(image_size, image_size),
+            A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            ToTensorV2(),
+        ])
+
+
+# Enhanced ResNet with attention mechanism
+class AttentionResNet(nn.Module):
+    def __init__(self, num_classes=2, dropout_rate=0.3, attention=True):
+        super(AttentionResNet, self).__init__()
+        self.backbone = models.resnet50(pretrained=True)
+        
+        # Remove the final classification layer
+        self.features = nn.Sequential(*list(self.backbone.children())[:-2])
+        
+        # Attention mechanism
+        if attention:
+            self.attention = nn.Sequential(
+                nn.Conv2d(2048, 512, kernel_size=1),
+                nn.ReLU(),
+                nn.Conv2d(512, 1, kernel_size=1),
+                nn.Sigmoid()
+            )
+        else:
+            self.attention = None
+        
+        # Global average pooling
+        self.global_pool = nn.AdaptiveAvgPool2d(1)
+        
+        # Enhanced classifier with regularization
+        self.classifier = nn.Sequential(
+            nn.Dropout(dropout_rate),
+            nn.Linear(2048, 1024),
+            nn.ReLU(),
+            nn.BatchNorm1d(1024),
+            nn.Dropout(dropout_rate * 0.7),
+            nn.Linear(1024, 512),
+            nn.ReLU(),
+            nn.BatchNorm1d(512),
+            nn.Dropout(dropout_rate * 0.5),
+            nn.Linear(512, num_classes)
+        )
+        
+        # Initialize weights
+        self._initialize_weights()
+    
+    def _initialize_weights(self):
+        for m in self.classifier.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+    
+    def forward(self, x):
+        # Extract features
+        features = self.features(x)
+        
+        # Apply attention if enabled
+        if self.attention is not None:
+            attention_weights = self.attention(features)
+            features = features * attention_weights
+        
+        # Global pooling
+        pooled = self.global_pool(features)
+        pooled = pooled.view(pooled.size(0), -1)
+        
+        # Classification
+        output = self.classifier(pooled)
+        return output
+
+
+# EfficientNet-based model
+class EfficientNetClassifier(nn.Module):
+    def __init__(self, num_classes=2, dropout_rate=0.3):
+        super(EfficientNetClassifier, self).__init__()
+        self.backbone = models.efficientnet_b3(pretrained=True)
+        
+        # Remove the final classification layer
+        self.features = nn.Sequential(*list(self.backbone.children())[:-1])
+        
+        # Enhanced classifier
+        self.classifier = nn.Sequential(
+            nn.Dropout(dropout_rate),
+            nn.Linear(1536, 768),
+            nn.ReLU(),
+            nn.BatchNorm1d(768),
+            nn.Dropout(dropout_rate * 0.7),
+            nn.Linear(768, 384),
+            nn.ReLU(),
+            nn.BatchNorm1d(384),
+            nn.Dropout(dropout_rate * 0.5),
+            nn.Linear(384, num_classes)
+        )
+        
+        self._initialize_weights()
+    
+    def _initialize_weights(self):
+        for m in self.classifier.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+    
+    def forward(self, x):
+        features = self.features(x)
+        features = features.view(features.size(0), -1)
+        output = self.classifier(features)
+        return output
+
+
+# Vision Transformer for medical images
+class MedicalViT(nn.Module):
+    def __init__(self, num_classes=2, img_size=224, patch_size=16, embed_dim=768, 
+                 num_heads=12, num_layers=12, dropout_rate=0.3):
+        super(MedicalViT, self).__init__()
+        
+        # Patch embedding
+        self.patch_embed = nn.Conv2d(3, embed_dim, kernel_size=patch_size, stride=patch_size)
+        self.pos_embed = nn.Parameter(torch.randn(1, (img_size // patch_size) ** 2, embed_dim))
+        
+        # Transformer layers
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=embed_dim,
+            nhead=num_heads,
+            dim_feedforward=embed_dim * 4,
+            dropout=dropout_rate,
+            activation='gelu'
+        )
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        
+        # Classification head
+        self.classifier = nn.Sequential(
+            nn.LayerNorm(embed_dim),
+            nn.Dropout(dropout_rate),
+            nn.Linear(embed_dim, embed_dim // 2),
+            nn.GELU(),
+            nn.Dropout(dropout_rate * 0.7),
+            nn.Linear(embed_dim // 2, num_classes)
+        )
+        
+        self._initialize_weights()
+    
+    def _initialize_weights(self):
+        nn.init.normal_(self.pos_embed, std=0.02)
+        for m in self.classifier.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+    
+    def forward(self, x):
+        # Patch embedding
+        x = self.patch_embed(x)  # B, C, H, W -> B, embed_dim, H//patch_size, W//patch_size
+        x = x.flatten(2).transpose(1, 2)  # B, (H//patch_size)**2, embed_dim
+        
+        # Add positional embedding
+        x = x + self.pos_embed
+        
+        # Transformer encoding
+        x = self.transformer(x)
+        
+        # Global average pooling
+        x = x.mean(dim=1)
+        
+        # Classification
+        output = self.classifier(x)
+        return output
+
+
+# Ensemble model combining multiple architectures
+class EnsembleModel(nn.Module):
+    def __init__(self, models, weights=None):
+        super(EnsembleModel, self).__init__()
+        self.models = nn.ModuleList(models)
+        self.weights = weights if weights is not None else [1.0] * len(models)
+        
+        # Normalize weights
+        total_weight = sum(self.weights)
+        self.weights = [w / total_weight for w in self.weights]
+    
+    def forward(self, x):
+        outputs = []
+        for model in self.models:
+            outputs.append(model(x))
+        
+        # Weighted ensemble
+        ensemble_output = torch.zeros_like(outputs[0])
+        for i, output in enumerate(outputs):
+            ensemble_output += self.weights[i] * output
+        
+        return ensemble_output
+
+
+# Advanced training utilities
+class AdvancedTrainer:
+    def __init__(self, model, device='cpu'):
+        self.model = model
+        self.device = device
+        self.model.to(device)
+        
+        # Advanced optimizers
+        self.optimizer = torch.optim.AdamW(
+            self.model.parameters(),
+            lr=1e-4,
+            weight_decay=1e-4,
+            betas=(0.9, 0.999)
+        )
+        
+        # Learning rate schedulers
+        self.scheduler = CosineAnnealingWarmRestarts(
+            self.optimizer,
+            T_0=10,
+            T_mult=2,
+            eta_min=1e-6
+        )
+        
+        # Loss function with label smoothing
+        self.criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+        
+        # Early stopping
+        self.best_loss = float('inf')
+        self.patience = 15
+        self.counter = 0
+    
+    def train_epoch(self, dataloader):
+        self.model.train()
+        total_loss = 0
+        correct = 0
+        total = 0
+        
+        for batch_idx, (data, target) in enumerate(dataloader):
+            data, target = data.to(self.device), target.to(self.device)
+            
+            self.optimizer.zero_grad()
+            output = self.model(data)
+            loss = self.criterion(output, target)
+            
+            loss.backward()
+            
+            # Gradient clipping
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+            
+            self.optimizer.step()
+            
+            total_loss += loss.item()
+            pred = output.argmax(dim=1, keepdim=True)
+            correct += pred.eq(target.view_as(pred)).sum().item()
+            total += target.size(0)
+        
+        self.scheduler.step()
+        return total_loss / len(dataloader), correct / total
+    
+    def validate(self, dataloader):
+        self.model.eval()
+        total_loss = 0
+        correct = 0
+        total = 0
+        
+        with torch.no_grad():
+            for data, target in dataloader:
+                data, target = data.to(self.device), target.to(self.device)
+                output = self.model(data)
+                loss = self.criterion(output, target)
+                
+                total_loss += loss.item()
+                pred = output.argmax(dim=1, keepdim=True)
+                correct += pred.eq(target.view_as(pred)).sum().item()
+                total += target.size(0)
+        
+        return total_loss / len(dataloader), correct / total
+    
+    def early_stopping(self, val_loss):
+        if val_loss < self.best_loss:
+            self.best_loss = val_loss
+            self.counter = 0
+            return False
+        else:
+            self.counter += 1
+            if self.counter >= self.patience:
+                return True
+        return False
 
 
 # small grad-cam implementation for ResNet50
